@@ -1,13 +1,9 @@
-# Python
 __pycache__/
 *.pyc
-.env
 venv/
-.vscode/
 
-# Docker
 docker-data/
 
-# Embedding models
 app/embedding_service/clip/
 app/embedding_service/sentence_transformer/
+app/embedding_service/wav2vec2/

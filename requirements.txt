@@ -1,29 +1,19 @@
-# FastAPI and Server
 fastapi
 uvicorn[standard]
 
-# Monitoring
 prometheus-fastapi-instrumentator
 
-# Database
 qdrant-client
 
-# Document Processing
 unstructured[all-docs] 
 
-# AI Models
 torch
 torchvision
 sentence-transformers
 openai-clip
 Pillow
 
-# Audio processing
-soundfile         # Pour lire les fichiers WAV (utilisé avec Wav2Vec2)
-ffmpeg-python     # Wrapper Python pour FFmpeg (utile pour debug ou manipulations avancées)
+soundfile         
+ffmpeg-python 
 
-# Video/audio handling (low-level extraction)
-imageio           # Optionnel mais pratique si vous étendez à d'autres formats ou previews
-
-# Transformers for CLIP + Wav2Vec2 (déjà probablement installé via sentence-transformers)
-transformers
+imageio    

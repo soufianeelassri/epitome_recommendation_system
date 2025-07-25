@@ -2,7 +2,7 @@ global:
   smtp_smarthost: 'smtp.gmail.com:587'
   smtp_from: 'soufianeelassrii@gmail.com'
   smtp_auth_username: 'soufianeelassrii@gmail.com'
-  smtp_auth_password: 'password'
+  smtp_auth_password: 'aqls rvzn xqjf rkyo'
 
 route:
   receiver: 'email-notifications'

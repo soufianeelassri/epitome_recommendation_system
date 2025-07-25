@@ -8,10 +8,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 def extract_frames(video_path: str, out_dir: str, fps: int = 1) -> List[str]:
-    """
-    Extracts frames from a video at the specified frame rate (fps).
-    Returns a list of file paths to the extracted images.
-    """
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg", "-i", video_path,
@@ -29,9 +25,6 @@ def extract_frames(video_path: str, out_dir: str, fps: int = 1) -> List[str]:
 
 
 def has_audio(video_path: str) -> bool:
-    """
-    Checks if the video file contains at least one audio stream.
-    """
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "a",
@@ -47,10 +40,6 @@ def has_audio(video_path: str) -> bool:
 
 
 def extract_audio(video_path: str, audio_out: str, sr: int = 16000) -> Optional[str]:
-    """
-    Extracts mono audio at 16 kHz from a video file.
-    Returns the path to the extracted .wav file, or None if no audio is found.
-    """
     if not has_audio(video_path):
         logger.info(f"No audio stream found in {video_path} → skipping extraction.")
         return None

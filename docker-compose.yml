@@ -1,5 +1,4 @@
 services:
-  # Our FastAPI Application
   fastapi-app:
     build: .
     container_name: fastapi-app
@@ -13,7 +12,6 @@ services:
       - qdrant
     restart: unless-stopped
 
-  # Qdrant Vector Database
   qdrant:
     image: qdrant/qdrant:v1.9.0
     container_name: qdrant
@@ -23,7 +21,6 @@ services:
       - ./docker-data/qdrant-data:/qdrant/storage
     restart: unless-stopped
 
-  # Prometheus Monitoring
   prometheus:
     image: prom/prometheus:v2.53.5
     container_name: prometheus
@@ -36,7 +33,6 @@ services:
       - fastapi-app
     restart: unless-stopped
 
-  # Grafana Visualization
   grafana:
     image: grafana/grafana:11.6.3
     container_name: grafana
@@ -49,7 +45,6 @@ services:
       - prometheus
     restart: unless-stopped
 
-  # Alertmanager for Alert Management
   alertmanager:
     image: prom/alertmanager:v0.28.0
     container_name: alertmanager
