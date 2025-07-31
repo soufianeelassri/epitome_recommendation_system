@@ -117,9 +117,15 @@ def search_similar_content(
         )
 
     try:
+        # Convert vector to list if it's a numpy array, otherwise use as is
+        if hasattr(vector, 'tolist'):
+            vector_list = vector.tolist()
+        else:
+            vector_list = vector
+            
         hits = qdrant_client.search(
             collection_name=QDRANT_COLLECTION_NAME,
-            query_vector=(vector_name, vector.tolist()),
+            query_vector=(vector_name, vector_list),
             query_filter=search_filter,
             limit=limit,
             with_payload=True,
@@ -127,4 +133,96 @@ def search_similar_content(
         return hits
     except Exception as e:
         logger.error(f"Error during Qdrant search for vector '{vector_name}': {e}")
+        return []
+
+
+def insert_temporary_point(
+    point_id: str,
+    vector: np.ndarray,
+    vector_name: str,
+    payload: dict
+) -> bool:
+    """Insert a temporary point for keyword search."""
+    try:
+        # Convert vector to list if it's a numpy array, otherwise use as is
+        if hasattr(vector, 'tolist'):
+            vector_list = vector.tolist()
+        else:
+            vector_list = vector
+            
+        qdrant_client.upsert(
+            collection_name=QDRANT_COLLECTION_NAME,
+            points=[models.PointStruct(id=point_id, vector={vector_name: vector_list}, payload=payload)],
+            wait=True  # Wait for the point to be inserted
+        )
+        logger.debug(f"Temporary point {point_id} inserted for keyword search")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to insert temporary point {point_id}: {e}")
+        return False
+
+
+def delete_point(point_id: str) -> bool:
+    """Delete a point from Qdrant."""
+    try:
+        qdrant_client.delete(
+            collection_name=QDRANT_COLLECTION_NAME,
+            points_selector=models.PointIdsList(
+                points=[point_id]
+            )
+        )
+        logger.debug(f"Point {point_id} deleted from Qdrant")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete point {point_id}: {e}")
+        return False
+
+
+def search_similar_to_point(
+    point_id: str,
+    vector_name: str,
+    limit: int = 10,
+    exclude_ids: Optional[List[str]] = None
+) -> List[models.ScoredPoint]:
+    """Search for content similar to a specific point in Qdrant."""
+    
+    # Exclude the query point itself and any other specified IDs
+    exclude_list = [point_id]
+    if exclude_ids:
+        exclude_list.extend(exclude_ids)
+    
+    search_filter = models.Filter(
+        must_not=[models.HasIdCondition(has_id=exclude_list)]
+    )
+
+    try:
+        # First, get the vector of the point we want to search for
+        points = qdrant_client.retrieve(
+            collection_name=QDRANT_COLLECTION_NAME,
+            ids=[point_id],
+            with_vectors=True
+        )
+        
+        if not points:
+            logger.error(f"Point {point_id} not found in Qdrant")
+            return []
+        
+        point = points[0]
+        if vector_name not in point.vector:
+            logger.error(f"Vector '{vector_name}' not found in point {point_id}")
+            return []
+        
+        # Use the vector from the point for similarity search
+        vector = point.vector[vector_name]
+        
+        hits = qdrant_client.search(
+            collection_name=QDRANT_COLLECTION_NAME,
+            query_vector=(vector_name, vector),
+            query_filter=search_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return hits
+    except Exception as e:
+        logger.error(f"Error during Qdrant search for point '{point_id}': {e}")
         return []

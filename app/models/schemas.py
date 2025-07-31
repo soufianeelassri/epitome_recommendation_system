@@ -7,6 +7,11 @@ class RecommendationRequest(BaseModel):
     limit: int = Field(10, gt=0, le=100, description="The maximum number of recommendations to return.")
     content_type: Optional[str] = Field(None, description="Filter recommendations by content type (e.g., 'video', 'text').")
 
+class KeywordsRecommendationRequest(BaseModel):
+    keywords: List[str] = Field(..., description="List of keywords to search for similar content.")
+    per_keyword_limit: int = Field(5, gt=0, le=20, description="Number of recommendations to find for each keyword.")
+    final_limit: int = Field(5, gt=0, le=50, description="Final number of top recommendations to return.")
+
 class UserInteraction(BaseModel):
     user_id: str = Field(..., description="The unique identifier for the user.")
     point_id: str = Field(..., description="The unique identifier of the content point in Qdrant.")
@@ -18,6 +23,14 @@ class RecommendationResponse(BaseModel):
     filename: Optional[str] = Field(None, description="The original filename of the recommended content (PDF, video, etc.).")
     type: str = Field(..., description="The type of content (e.g., 'document', 'video').")
     similarity_score: float = Field(..., description="The highest cosine similarity score that led to this recommendation.")
+    best_matching_chunk_payload: Dict[str, Any] = Field({}, description="Payload of the best matching chunk inside the document.")
+
+class KeywordsRecommendationResponse(BaseModel):
+    doc_id: Optional[str] = Field(None, description="The unique identifier of the source document.")
+    filename: Optional[str] = Field(None, description="The original filename of the recommended content (PDF, video, etc.).")
+    type: str = Field(..., description="The type of content (e.g., 'document', 'video').")
+    similarity_score: float = Field(..., description="The highest cosine similarity score that led to this recommendation.")
+    keyword: str = Field(..., description="The keyword that matched this content.")
     best_matching_chunk_payload: Dict[str, Any] = Field({}, description="Payload of the best matching chunk inside the document.")
 
 

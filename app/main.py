@@ -76,6 +76,29 @@ def get_recommendations(request: schemas.RecommendationRequest):
     )
     return recommendations
 
+@app.post("/ai/recommendations/keywords", 
+          response_model=list[schemas.KeywordsRecommendationResponse], 
+          tags=["Recommendations"])
+def get_recommendations_by_keywords(request: schemas.KeywordsRecommendationRequest):
+    """
+    Get content recommendations based on a list of keywords.
+    For each keyword, finds the most similar content, then returns the top results
+    based on similarity scores.
+    """
+    if not request.keywords:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one keyword must be provided."
+        )
+
+    recommendations = recommender.get_recommendations_for_keywords(
+        keywords=request.keywords,
+        per_keyword_limit=request.per_keyword_limit,
+        final_limit=request.final_limit
+    )
+    
+    return recommendations
+
 @app.get("/ai/user/{user_id}/profile", 
          response_model=schemas.UserProfileResponse, 
          tags=["User Management"])
