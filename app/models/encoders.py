@@ -1,4 +1,3 @@
-# Enhanced multimodal encoder with better error handling and lazy loading
 from sentence_transformers import SentenceTransformer
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
@@ -15,11 +14,9 @@ logger = logging.getLogger(__name__)
 
 class MultimodalEncoder:
     def __init__(self):
-        # Select device: use GPU if available, otherwise CPU
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"MultimodalEncoder initialized, will use device: {self.device}")
         
-        # Initialize models as None - they will be loaded lazily
         self.text_model = None
         self.image_model = None
         self.image_preprocess = None
@@ -59,30 +56,23 @@ class MultimodalEncoder:
                 logger.error(f"Error loading audio model: {e}")
                 raise
 
-    def encode_text(self, text: str):
+    def encode_text(self, text):
         if not text or not isinstance(text, str):
             return []
         
-        # Load text model if not already loaded
         self._load_text_model()
         
-        # Generate embedding for the input text
         embedding = self.text_model.encode(text, convert_to_tensor=False)
         return embedding.tolist()
 
     def encode_image(self, image_data):
         try:
-            # Load image model if not already loaded
             self._load_image_model()
             
-            # Handle different types of image data
             if isinstance(image_data, str):
-                # It's a base64 string, need to decode it first
-                # Remove data URL prefix if present (data:image/png;base64,)
                 if image_data.startswith('data:'):
                     image_data = image_data.split(',', 1)[1]
                 
-                # Decode base64 string to bytes
                 try:
                     image_bytes = base64.b64decode(image_data)
                 except Exception as e:
@@ -90,30 +80,25 @@ class MultimodalEncoder:
                     return None
                 
             elif isinstance(image_data, bytes):
-                # It's already bytes
                 image_bytes = image_data
                 
             else:
                 logger.error(f"Unsupported image data type: {type(image_data)}")
                 return None
             
-            # Validate that we have image data
             if not image_bytes:
                 logger.error("Empty image data")
                 return None
             
-            # Open the image from bytes
             try:
                 image = Image.open(io.BytesIO(image_bytes))
             except Exception as e:
                 logger.error(f"Error opening image from bytes: {e}")
                 return None
             
-            # Convert to RGB if necessary
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             
-            # Preprocess the image and move to the correct device
             try:
                 processed = self.image_preprocess(images=image, return_tensors="pt")
                 image_input = processed["pixel_values"].to(self.device)
@@ -122,14 +107,12 @@ class MultimodalEncoder:
                 return None
             
             with torch.no_grad():
-                # Generate image features using the correct CLIP method
                 try:
                     image_features = self.image_model.get_image_features(pixel_values=image_input)
                 except Exception as e:
                     logger.error(f"Error encoding image with CLIP: {e}")
                     return None
             
-            # Normalize the features
             image_features /= image_features.norm(dim=-1, keepdim=True)
             return image_features.cpu().squeeze().numpy().tolist()
             
@@ -174,6 +157,4 @@ class MultimodalEncoder:
             logger.error(f"Error generating video embedding from frames: {e}")
             return None
 
-# Create a global instance of the encoder for use throughout the application
-# This will no longer trigger model loading during import
 encoder = MultimodalEncoder()

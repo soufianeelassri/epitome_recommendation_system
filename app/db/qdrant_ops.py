@@ -1,8 +1,6 @@
 from qdrant_client import QdrantClient, models
 import uuid
 import logging
-from typing import List, Optional
-import numpy as np
 
 from app.core.config import (
     QDRANT_HOST, QDRANT_PORT, QDRANT_COLLECTION_NAME,
@@ -13,7 +11,6 @@ from app.core.config import (
 from app.models.encoders import encoder
 
 logger = logging.getLogger(__name__)
-# Initialize Qdrant client with host and port from config
 qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 
@@ -35,7 +32,7 @@ def create_collection_if_not_exists():
         logger.info("Collection created successfully.")
 
 
-def upsert_chunk(doc_id: str, chunk_metadata: dict, text_chunk: str = None, image_chunk_bytes: bytes = None):
+def upsert_chunk(doc_id, chunk_metadata, text_chunk = None, image_chunk_bytes = None):
     point_id = str(uuid.uuid4())
     vectors = {}
     payload = {"doc_id": doc_id, **chunk_metadata}
@@ -66,9 +63,9 @@ def upsert_chunk(doc_id: str, chunk_metadata: dict, text_chunk: str = None, imag
     logger.debug(f"Upserted chunk for doc_id {doc_id} with point_id {point_id}")
 
 
-def upsert_video_audio_embeddings(filename: str, video_vector: list, audio_vector: list | None = None):
+def upsert_video_audio_embeddings(doc_id, metadata, video_vector, audio_vector = None):
     point_id = str(uuid.uuid4())
-    payload = {"filename": filename, "type": "video"}
+    payload = {"doc_id": doc_id, **metadata}
 
     vectors = {VIDEO_VECTOR_NAME: video_vector}
     if audio_vector:
@@ -79,11 +76,10 @@ def upsert_video_audio_embeddings(filename: str, video_vector: list, audio_vecto
         points=[models.PointStruct(id=point_id, vector=vectors, payload=payload)],
         wait=False
     )
-    logger.info(f"Video/audio embeddings upserted for file {filename}")
+    logger.info(f"Video/audio embeddings upserted for doc_id {doc_id}")
 
 
-def get_points_by_ids(point_ids: List[str]) -> List[models.Record]:
-    """Retrieve full point data for a list of point IDs."""
+def get_points_by_ids(point_ids):
     if not point_ids:
         return []
     try:
@@ -101,15 +97,7 @@ def get_points_by_ids(point_ids: List[str]) -> List[models.Record]:
         logger.error(f"Failed to retrieve points by IDs: {e}")
         return []
 
-def search_similar_content(
-    vector: np.ndarray,
-    vector_name: str,
-    limit: int = 10,
-    exclude_ids: Optional[List[str]] = None
-) -> List[models.ScoredPoint]:
-    """Performs a similarity search in Qdrant."""
-    
-    # Exclude previously interacted items from recommendations
+def search_similar_content(vector, vector_name, limit = 10, exclude_ids = None):
     search_filter = None
     if exclude_ids:
         search_filter = models.Filter(
@@ -117,11 +105,7 @@ def search_similar_content(
         )
 
     try:
-        # Convert vector to list if it's a numpy array, otherwise use as is
-        if hasattr(vector, 'tolist'):
-            vector_list = vector.tolist()
-        else:
-            vector_list = vector
+        vector_list = vector.tolist() if hasattr(vector, 'tolist') else vector
             
         hits = qdrant_client.search(
             collection_name=QDRANT_COLLECTION_NAME,
@@ -136,15 +120,8 @@ def search_similar_content(
         return []
 
 
-def insert_temporary_point(
-    point_id: str,
-    vector: np.ndarray,
-    vector_name: str,
-    payload: dict
-) -> bool:
-    """Insert a temporary point for keyword search."""
+def insert_temporary_point(point_id, vector, vector_name, payload):
     try:
-        # Convert vector to list if it's a numpy array, otherwise use as is
         if hasattr(vector, 'tolist'):
             vector_list = vector.tolist()
         else:
@@ -153,7 +130,7 @@ def insert_temporary_point(
         qdrant_client.upsert(
             collection_name=QDRANT_COLLECTION_NAME,
             points=[models.PointStruct(id=point_id, vector={vector_name: vector_list}, payload=payload)],
-            wait=True  # Wait for the point to be inserted
+            wait=True 
         )
         logger.debug(f"Temporary point {point_id} inserted for keyword search")
         return True
@@ -162,8 +139,7 @@ def insert_temporary_point(
         return False
 
 
-def delete_point(point_id: str) -> bool:
-    """Delete a point from Qdrant."""
+def delete_point(point_id):
     try:
         qdrant_client.delete(
             collection_name=QDRANT_COLLECTION_NAME,
@@ -177,16 +153,7 @@ def delete_point(point_id: str) -> bool:
         logger.error(f"Failed to delete point {point_id}: {e}")
         return False
 
-
-def search_similar_to_point(
-    point_id: str,
-    vector_name: str,
-    limit: int = 10,
-    exclude_ids: Optional[List[str]] = None
-) -> List[models.ScoredPoint]:
-    """Search for content similar to a specific point in Qdrant."""
-    
-    # Exclude the query point itself and any other specified IDs
+def search_similar_to_point(point_id, vector_name, limit = 10, exclude_ids = None):
     exclude_list = [point_id]
     if exclude_ids:
         exclude_list.extend(exclude_ids)
@@ -196,7 +163,6 @@ def search_similar_to_point(
     )
 
     try:
-        # First, get the vector of the point we want to search for
         points = qdrant_client.retrieve(
             collection_name=QDRANT_COLLECTION_NAME,
             ids=[point_id],
@@ -212,7 +178,6 @@ def search_similar_to_point(
             logger.error(f"Vector '{vector_name}' not found in point {point_id}")
             return []
         
-        # Use the vector from the point for similarity search
         vector = point.vector[vector_name]
         
         hits = qdrant_client.search(

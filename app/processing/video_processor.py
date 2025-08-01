@@ -2,12 +2,11 @@ import subprocess
 import json
 import glob
 from pathlib import Path
-from typing import List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
-def extract_frames(video_path: str, out_dir: str, fps: int = 1) -> List[str]:
+def extract_frames(video_path, out_dir, fps = 1):
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg", "-i", video_path,
@@ -24,7 +23,7 @@ def extract_frames(video_path: str, out_dir: str, fps: int = 1) -> List[str]:
     return sorted(glob.glob(f"{out_dir}/frame_*.jpg"))
 
 
-def has_audio(video_path: str) -> bool:
+def has_audio(video_path):
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "a",
@@ -39,7 +38,7 @@ def has_audio(video_path: str) -> bool:
         return False
 
 
-def extract_audio(video_path: str, audio_out: str, sr: int = 16000) -> Optional[str]:
+def extract_audio(video_path, audio_out, sr = 16000):
     if not has_audio(video_path):
         logger.info(f"No audio stream found in {video_path} → skipping extraction.")
         return None

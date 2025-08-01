@@ -1,116 +1,149 @@
 import logging
 import numpy as np
-from typing import List, Dict
 from collections import defaultdict
 import uuid
+from typing import List, Dict, Any
 
-from app.db.qdrant_ops import get_points_by_ids, search_similar_content, insert_temporary_point, delete_point, search_similar_to_point
-from app.core.config import TEXT_VECTOR_NAME, IMAGE_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME
+from app.db import qdrant_ops
+from app.core.config import TEXT_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME
 from app.models.encoders import encoder
+from app.recommendation import user_service
+from qdrant_client import models
 
 logger = logging.getLogger(__name__)
 
-VALID_VECTOR_NAMES = {TEXT_VECTOR_NAME, IMAGE_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME}
+VALID_VECTOR_NAMES = {TEXT_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME}
 
 def build_user_profile_vector(point_ids: List[str]) -> Dict[str, np.ndarray]:
-    """
-    Builds a user's profile by averaging the vectors of content they've interacted with.
-    """
+    """Builds a user's profile by averaging the vectors of content they've interacted with."""
     if not point_ids:
         return {}
 
-    points = get_points_by_ids(point_ids)
+    points = qdrant_ops.get_points_by_ids(point_ids)
     if not points:
         return {}
 
     vector_aggs = defaultdict(list)
     for point in points:
-        # Check if point.vector is a dictionary
         if isinstance(point.vector, dict):
             for vec_name, vector in point.vector.items():
                 if vec_name in VALID_VECTOR_NAMES and vector:
                     vector_aggs[vec_name].append(np.array(vector))
-        # Handle cases where point.vector might be a list (older format, for robustness)
-        elif isinstance(point.vector, list):
-             vector_aggs[TEXT_VECTOR_NAME].append(np.array(point.vector))
-
 
     profile_vectors = {}
     for vec_name, vectors in vector_aggs.items():
         if vectors:
             profile_vectors[vec_name] = np.mean(vectors, axis=0)
-            logger.info(f"Generated profile vector for modality '{vec_name}' with shape {profile_vectors[vec_name].shape}")
+            logger.info(f"Generated profile vector for '{vec_name}'")
             
     return profile_vectors
 
-
-def get_recommendations_for_user(
-    user_id: str,
-    interaction_history: List[str],
-    limit: int = 10
-) -> List[dict]:
-    """
-    Generates content recommendations for a given user, ensuring each source document
-    is recommended only once.
-    """
-    profile_vectors = build_user_profile_vector(interaction_history)
-
-    if not profile_vectors:
-        logger.warning(f"Could not generate profile vector for user '{user_id}'. No recommendations possible.")
-        return []
-
-    # This dictionary will store the best recommendation for each source document (doc_id or filename).
+def get_recommendations_for_user(user_id: str, interaction_history: List[str], limit: int) -> List[Dict[str, Any]]:
+    """Generates hybrid recommendations using a filter-first or vector-search strategy."""
+    
+    user_prefs = user_service.get_user_preferences(user_id)
     recommended_docs = {}
-
-    for vec_name, profile_vector in profile_vectors.items():
-        per_modality_limit = limit * 2  # Fetch more to ensure we have enough after deduplication
+    
+    if not interaction_history:
+        logger.info(f"Cold start for user '{user_id}'. Using filter-first strategy.")
         
-        hits = search_similar_content(
-            vector=profile_vector,
-            vector_name=vec_name,
-            limit=per_modality_limit,
-            exclude_ids=interaction_history
+        filter_conditions = []
+        if user_prefs.areas_of_interest:
+            filter_conditions.append(models.FieldCondition(
+                key="category",
+                match=models.MatchAny(any=user_prefs.areas_of_interest)
+            ))
+        if user_prefs.preferred_content_types:
+            types_to_match = []
+            if "Video" in user_prefs.preferred_content_types:
+                types_to_match.extend(['video_summary', 'video_chunk'])
+            if "Document" in user_prefs.preferred_content_types:
+                 types_to_match.extend(['document', 'metadata'])
+            
+            if types_to_match:
+                filter_conditions.append(models.FieldCondition(
+                    key="content_type",
+                    match=models.MatchAny(any=types_to_match)
+                ))
+
+        if not filter_conditions:
+            logger.warning(f"User '{user_id}' has no preferences to filter by. Cannot recommend.")
+            return []
+
+        candidate_points, _ = qdrant_ops.qdrant_client.scroll(
+            collection_name=qdrant_ops.QDRANT_COLLECTION_NAME,
+            scroll_filter=models.Filter(should=filter_conditions),
+            limit=200,
+            with_payload=True
         )
         
-        for hit in hits:
-            payload = hit.payload
-            # Use doc_id for documents, and filename as a fallback for videos
-            source_key = payload.get('doc_id') or payload.get('filename')
-            
-            if not source_key:
-                continue # Skip chunks that don't have a source identifier
+        for point in candidate_points:
+            payload = point.payload
+            score = 1.0
+            if user_prefs.preferred_content_types and any(t in payload.get('content_type', '') for t in types_to_match):
+                score += 0.5
+            if user_prefs.areas_of_interest and payload.get('category') in user_prefs.areas_of_interest:
+                score += 0.5
 
-            # If we haven't seen this document OR this new chunk has a better score, store it.
-            if source_key not in recommended_docs or hit.score > recommended_docs[source_key]['similarity_score']:
-                
-                # This is the new, clean response format
-                response_item = {
-                    'doc_id': payload.get('doc_id'),
-                    'filename': payload.get('original_filename') or payload.get('filename'),
-                    'type': 'video' if payload.get('type') == 'video' else 'document',
-                    'similarity_score': hit.score,
-                    'best_matching_chunk_payload': payload # Include the chunk payload for context
+            source_key = payload.get('doc_id')
+            if source_key and (source_key not in recommended_docs or score > recommended_docs[source_key]['similarity_score']):
+                 recommended_docs[source_key] = {
+                    'doc_id': source_key,
+                    'title': payload.get('title', 'Title not available'),
+                    'filename': payload.get('original_filename'),
+                    'type': 'video' if 'video' in payload.get('content_type', '') else 'document',
+                    'similarity_score': score,
+                    'best_matching_chunk_payload': payload,
+                    'start_time': payload.get('start_time'),
+                    'end_time': payload.get('end_time'),
                 }
-                recommended_docs[source_key] = response_item
 
-    # Sort the unique document recommendations by their highest score
+    else:
+        logger.info(f"Warm start for user '{user_id}'. Using interaction history.")
+        profile_vectors = build_user_profile_vector(interaction_history)
+        if not profile_vectors: return []
+
+        all_hits = []
+        for vec_name, profile_vector in profile_vectors.items():
+            all_hits.extend(qdrant_ops.search_similar_content(
+                vector=profile_vector,
+                vector_name=vec_name,
+                limit=limit * 2,
+                exclude_ids=interaction_history
+            ))
+
+        for hit in all_hits:
+            payload = hit.payload
+            source_key = payload.get('doc_id')
+            if not source_key: continue
+
+            boost = 0.0
+            if user_prefs.preferred_content_types and "Video" in user_prefs.preferred_content_types and 'video' in payload.get('content_type', ''):
+                boost += 0.15
+            if user_prefs.areas_of_interest and payload.get('category') in user_prefs.areas_of_interest:
+                 boost += 0.1
+            
+            final_score = hit.score + boost
+
+            if source_key not in recommended_docs or final_score > recommended_docs[source_key]['similarity_score']:
+                recommended_docs[source_key] = {
+                    'doc_id': source_key,
+                    'title': payload.get('title', 'Title not available'),
+                    'filename': payload.get('original_filename'),
+                    'type': 'video' if 'video' in payload.get('content_type', '') else 'document',
+                    'similarity_score': final_score,
+                    'best_matching_chunk_payload': payload,
+                    'start_time': payload.get('start_time'),
+                    'end_time': payload.get('end_time'),
+                }
+
     sorted_recommendations = sorted(recommended_docs.values(), key=lambda x: x['similarity_score'], reverse=True)
-
-    logger.info(f"Generated {len(sorted_recommendations)} unique document recommendations for user '{user_id}'")
+    logger.info(f"Generated {len(sorted_recommendations)} unique recommendations for user '{user_id}'")
     
     return sorted_recommendations[:limit]
 
-
-def get_recommendations_for_keywords(
-    keywords: List[str],
-    per_keyword_limit: int = 5,
-    final_limit: int = 5
-) -> List[dict]:
-    """
-    Generates content recommendations for a list of keywords.
-    For each keyword, temporarily stores it in Qdrant, searches for similar content,
-    then removes the temporary point.
-    """
+def get_recommendations_for_keywords(keywords: List[str], per_keyword_limit: int, final_limit: int) -> List[Dict[str, Any]]:
+    """Generates content recommendations based on a list of keywords."""
     if not keywords:
         logger.warning("No keywords provided for recommendation search.")
         return []
@@ -122,26 +155,18 @@ def get_recommendations_for_keywords(
         for keyword in keywords:
             logger.info(f"Searching for content similar to keyword: '{keyword}'")
             
-            # Encode the keyword to get its vector representation
             keyword_vector = encoder.encode_text(keyword)
-            
             if keyword_vector is None:
                 logger.warning(f"Could not encode keyword '{keyword}', skipping.")
                 continue
             
-            # Create a temporary point ID using UUID
             temp_point_id = str(uuid.uuid4())
+            temp_payload = {"type": "temporary_keyword", "keyword": keyword, "text": keyword}
             
-            # Insert the keyword as a temporary point in Qdrant
-            temp_payload = {
-                "type": "temporary_keyword",
-                "keyword": keyword,
-                "text": keyword
-            }
-            
-            success = insert_temporary_point(
+            # --- CORRECTED: Added qdrant_ops. prefix ---
+            success = qdrant_ops.insert_temporary_point(
                 point_id=temp_point_id,
-                vector=keyword_vector,
+                vector=np.array(keyword_vector),
                 vector_name=TEXT_VECTOR_NAME,
                 payload=temp_payload
             )
@@ -150,57 +175,45 @@ def get_recommendations_for_keywords(
                 logger.error(f"Failed to insert temporary point for keyword '{keyword}', skipping.")
                 continue
             
-            # Add to the list of temporary points only if insertion was successful
             temporary_point_ids.append(temp_point_id)
+            all_hits = []
             
-            # Search for similar content using the temporary point
-            hits = search_similar_to_point(
-                point_id=temp_point_id,
-                vector_name=TEXT_VECTOR_NAME,
-                limit=per_keyword_limit * 2,  # Get more to ensure we have enough after deduplication
-                exclude_ids=temporary_point_ids  # Exclude other temporary points
-            )
+            for vector_name in [TEXT_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME]:
+                # --- CORRECTED: Added qdrant_ops. prefix ---
+                hits = qdrant_ops.search_similar_to_point(
+                    point_id=temp_point_id,
+                    vector_name=vector_name,
+                    limit=per_keyword_limit,
+                    exclude_ids=temporary_point_ids
+                )
+                all_hits.extend(hits)
             
-            # Process hits for this keyword
-            keyword_recommendations = {}
+            hits = sorted(all_hits, key=lambda x: x.score, reverse=True)
+            
+            # This logic remains the same
             for hit in hits:
                 payload = hit.payload
-                # Use doc_id for documents, and filename as a fallback for videos
                 source_key = payload.get('doc_id') or payload.get('filename')
-                
-                if not source_key:
-                    continue  # Skip chunks that don't have a source identifier
+                if not source_key: continue 
 
-                # If we haven't seen this document OR this new chunk has a better score, store it.
-                if source_key not in keyword_recommendations or hit.score > keyword_recommendations[source_key]['similarity_score']:
+                if source_key not in all_recommendations or hit.score > next((r['similarity_score'] for r in all_recommendations if r.get('doc_id') == source_key), -1):
+                    all_recommendations = [r for r in all_recommendations if r.get('doc_id') != source_key]
                     response_item = {
                         'doc_id': payload.get('doc_id'),
                         'filename': payload.get('original_filename') or payload.get('filename'),
-                        'type': 'video' if payload.get('type') == 'video' else 'document',
+                        'type': 'video' if 'video' in payload.get('type', '') else 'document',
                         'similarity_score': hit.score,
                         'keyword': keyword,
                         'best_matching_chunk_payload': payload
                     }
-                    keyword_recommendations[source_key] = response_item
-            
-            # Add the top recommendations for this keyword
-            sorted_keyword_recs = sorted(keyword_recommendations.values(), key=lambda x: x['similarity_score'], reverse=True)
-            all_recommendations.extend(sorted_keyword_recs[:per_keyword_limit])
-            
-            logger.info(f"Found {len(sorted_keyword_recs[:per_keyword_limit])} recommendations for keyword '{keyword}'")
-    
+                    all_recommendations.append(response_item)
     finally:
-        # Clean up: delete all temporary points
         for temp_point_id in temporary_point_ids:
             try:
-                delete_point(temp_point_id)
+                qdrant_ops.delete_point(temp_point_id)
                 logger.debug(f"Cleaned up temporary point: {temp_point_id}")
             except Exception as e:
                 logger.warning(f"Failed to clean up temporary point {temp_point_id}: {e}")
 
-    # Sort all recommendations by similarity score and return the top results
-    final_recommendations = sorted(all_recommendations, key=lambda x: x['similarity_score'], reverse=True)
-    
-    logger.info(f"Generated {len(final_recommendations)} total recommendations from {len(keywords)} keywords")
-    
-    return final_recommendations[:final_limit]
+    sorted_recommendations = sorted(all_recommendations, key=lambda x: x['similarity_score'], reverse=True)
+    return sorted_recommendations[:final_limit]
