@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 VALID_VECTOR_NAMES = {TEXT_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME}
 
 def build_user_profile_vector(point_ids: List[str]) -> Dict[str, np.ndarray]:
-    """Builds a user's profile by averaging the vectors of content they've interacted with."""
     if not point_ids:
         return {}
 
@@ -39,7 +38,6 @@ def build_user_profile_vector(point_ids: List[str]) -> Dict[str, np.ndarray]:
     return profile_vectors
 
 def get_recommendations_for_user(user_id: str, interaction_history: List[str], limit: int) -> List[Dict[str, Any]]:
-    """Generates hybrid recommendations using a filter-first or vector-search strategy."""
     
     user_prefs = user_service.get_user_preferences(user_id)
     recommended_docs = {}
@@ -143,7 +141,6 @@ def get_recommendations_for_user(user_id: str, interaction_history: List[str], l
     return sorted_recommendations[:limit]
 
 def get_recommendations_for_keywords(keywords: List[str], per_keyword_limit: int, final_limit: int) -> List[Dict[str, Any]]:
-    """Generates content recommendations based on a list of keywords."""
     if not keywords:
         logger.warning("No keywords provided for recommendation search.")
         return []
@@ -163,7 +160,6 @@ def get_recommendations_for_keywords(keywords: List[str], per_keyword_limit: int
             temp_point_id = str(uuid.uuid4())
             temp_payload = {"type": "temporary_keyword", "keyword": keyword, "text": keyword}
             
-            # --- CORRECTED: Added qdrant_ops. prefix ---
             success = qdrant_ops.insert_temporary_point(
                 point_id=temp_point_id,
                 vector=np.array(keyword_vector),
@@ -179,7 +175,6 @@ def get_recommendations_for_keywords(keywords: List[str], per_keyword_limit: int
             all_hits = []
             
             for vector_name in [TEXT_VECTOR_NAME, VIDEO_VECTOR_NAME, AUDIO_VECTOR_NAME]:
-                # --- CORRECTED: Added qdrant_ops. prefix ---
                 hits = qdrant_ops.search_similar_to_point(
                     point_id=temp_point_id,
                     vector_name=vector_name,
@@ -190,7 +185,6 @@ def get_recommendations_for_keywords(keywords: List[str], per_keyword_limit: int
             
             hits = sorted(all_hits, key=lambda x: x.score, reverse=True)
             
-            # This logic remains the same
             for hit in hits:
                 payload = hit.payload
                 source_key = payload.get('doc_id') or payload.get('filename')

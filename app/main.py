@@ -4,7 +4,6 @@ import uuid
 import logging
 import json
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Body
-from prometheus_fastapi_instrumentator import Instrumentator
 from pathlib import Path
 from typing import List, Optional
 
@@ -16,6 +15,7 @@ from app.db.qdrant_ops import create_collection_if_not_exists, qdrant_client, up
 from app.processing.document_processor import process_pdf
 from app.recommendation import user_service, recommender
 from app.models import schemas
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -26,7 +26,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-Instrumentator().instrument(app).expose(app)
+#  Middleware CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3002", "http://127.0.0.1:3002"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def startup_event():
