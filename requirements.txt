@@ -1,8 +1,6 @@
 fastapi
 uvicorn[standard]
 
-prometheus-fastapi-instrumentator
-
 qdrant-client
 
 unstructured[all-docs] 
@@ -17,3 +15,6 @@ soundfile
 ffmpeg-python 
 
 imageio    
+
+langchain
+langchain-openai

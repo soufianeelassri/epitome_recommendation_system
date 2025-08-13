@@ -54,3 +54,20 @@ class HealthCheckResponse(BaseModel):
     api_status: str
     qdrant_status: str
     error: Optional[str] = None
+    
+class AskRequest(BaseModel):
+    user_id: str = Field(..., description="L'identifiant unique de l'utilisateur.")
+    question: str = Field(..., description="La question de l'utilisateur au chatbot.")
+    conversation_id: Optional[str] = Field(None, description="L'ID de la conversation en cours pour maintenir le contexte.")
+
+class SourceDocument(BaseModel):
+    doc_id: Optional[str] = None
+    filename: Optional[str] = None
+    content_type: str
+    page_number: Optional[int] = None
+    score: float
+
+class AskResponse(BaseModel):
+    answer: str = Field(..., description="La réponse générée par le chatbot.")
+    conversation_id: str = Field(..., description="L'ID de la conversation, à renvoyer pour les questions suivantes.")
+    sources: List[SourceDocument] = Field(..., description="Liste des documents sources utilisés pour générer la réponse.")

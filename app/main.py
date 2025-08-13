@@ -4,6 +4,8 @@ import uuid
 import logging
 import json
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Body
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter
 from pathlib import Path
 from typing import List, Optional
 
@@ -15,18 +17,19 @@ from app.db.qdrant_ops import create_collection_if_not_exists, qdrant_client, up
 from app.processing.document_processor import process_pdf
 from app.recommendation import user_service, recommender
 from app.models import schemas
-from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import OPENAI_API_KEY
+from app.chatbot import rag_pipeline, history
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Epitome Academy Recommendation System API",
-    description="API for content processing and recommendation at Epitome Academy.",
+    title="Epitome Academy - AI",
+    description="API for content processing, recommendation, and AI chatbot at Epitome Academy.",
     version="1.0.0",
 )
 
-#  Middleware CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3002", "http://127.0.0.1:3002"],
@@ -209,3 +212,36 @@ def health_check():
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail={"api_status": "ok", "qdrant_status": "error", "error": str(e)})
+    
+chat_router = APIRouter(prefix="/ai/chat", tags=["AI Chatbot"])
+
+@chat_router.post("/ask", response_model=schemas.AskResponse)
+def ask_question(request: schemas.AskRequest):
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI API key is not configured.")
+
+    conv_id = history.get_or_create_conversation_id(request.conversation_id)
+    chat_history = history.get_history(conv_id)
+    
+    result = rag_pipeline.rag_chain({
+        "question": request.question,
+        "chat_history": chat_history
+    })
+    
+    history.update_history(conv_id, request.question, result["answer"])
+    
+    return schemas.AskResponse(
+        answer=result["answer"],
+        conversation_id=conv_id,
+        sources=result["sources"]
+    )
+
+@chat_router.get("/{conversation_id}/history", tags=["AI Chatbot"])
+def get_conversation_history(conversation_id: str):
+    chat_history = history.get_history(conversation_id)
+    if not chat_history:
+        raise HTTPException(status_code=404, detail="Conversation history not found.")
+    return {"conversation_id": conversation_id, "history": chat_history}
+
+
+app.include_router(chat_router)

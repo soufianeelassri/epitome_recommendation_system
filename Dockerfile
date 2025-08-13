@@ -1,12 +1,13 @@
 FROM python:3.10-slim
 
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     tesseract-ocr \
     libtesseract-dev \
     libleptonica-dev \
     poppler-utils \
-    ffmpeg libsndfile1 \
+    ffmpeg \
+    libsndfile1 \
     && rm -rf /var/lib/apt/lists/* && apt-get clean
 
 WORKDIR /app
