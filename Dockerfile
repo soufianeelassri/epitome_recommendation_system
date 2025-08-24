@@ -15,7 +15,8 @@ WORKDIR /app
 COPY ./requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --timeout 300 --retries 3 -r requirements.txt
+    pip install --no-cache-dir --timeout 300 --retries 3 -r requirements.txt && \
+    python -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perceptron_tagger')"
 
 COPY ./app /app
 
